@@ -1,5 +1,6 @@
-# TR - English-Spanish Translation CLI Tool
+tr - translation tool for spanish to english and vice versa
 
+<<<<<<< HEAD
 A command-line tool for translating between English and Spanish with verb conjugations.
 
 ## Build
@@ -79,3 +80,7 @@ Verb Conjugations:
 - `-v, --version`: Show version
 
 Verb conjugations are automatically shown for Spanish verbs.
+=======
+
+vibe coded and WIP
+>>>>>>> e76fa1956e5675bbc922901696910c34a7ea982e
