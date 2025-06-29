@@ -1,0 +1,41 @@
+# Binaries
+tr
+tr.exe
+tr-*
+*.exe
+
+# Go build cache
+*.mod
+*.sum
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Testing
+coverage.out
+*.test
+
+# Temporary files
+*.tmp
+*.temp
