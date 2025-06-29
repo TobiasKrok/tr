@@ -427,11 +427,11 @@ func (t *translator) cleanConjugation(text string) string {
 	// Remove HTML tags
 	re := regexp.MustCompile(`<[^>]*>`)
 	text = re.ReplaceAllString(text, "")
-	
+
 	// Replace common HTML entities
 	text = strings.ReplaceAll(text, "&nbsp;", " ")
 	text = strings.ReplaceAll(text, "&amp;", "&")
-	
+
 	return strings.TrimSpace(text)
 }
 
@@ -481,7 +481,7 @@ func (t *translator) parseSpanishDictHTML(html, verb string) (map[string]map[str
 // extractFromSpanishDictTable extracts conjugations from SpanishDict's specific table structure
 func (t *translator) extractFromSpanishDictTable(table *goquery.Selection, verb string) map[string]map[string]string {
 	conjugations := make(map[string]map[string]string)
-	
+
 	// SpanishDict tables have a predictable order: Present, Preterite, Imperfect, Conditional, Future
 	tenseNames := []string{"present", "preterite", "imperfect", "conditional", "future"}
 
