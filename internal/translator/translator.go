@@ -129,32 +129,10 @@ func (t *translator) GetConjugations(verb string) (map[string]map[string]string,
 		return cached, nil
 	}
 
-	// Try to get conjugations from SpanishDict
-	var conjugations map[string]map[string]string
-	var err error
-	conjugations, err = t.getConjugationsFromSpanishDict(verb)
-
-	// Generate rule-based as backup for regular verbs only
-	ruleBasedConjugations := t.generateRuleBasedConjugations(verb)
-
-	// If HTML parsing failed completely, use rule-based
-	if err != nil || len(conjugations) == 0 {
-		conjugations = ruleBasedConjugations
-	} else {
-		// HTML parsing succeeded partially - fill in missing entries with rule-based
-		for tense, ruleConjugations := range ruleBasedConjugations {
-			if htmlConjugations, exists := conjugations[tense]; exists {
-				// Tense exists in HTML data, fill in missing persons
-				for person, ruleConjugation := range ruleConjugations {
-					if _, personExists := htmlConjugations[person]; !personExists || htmlConjugations[person] == "" || htmlConjugations[person] == "-" {
-						htmlConjugations[person] = ruleConjugation
-					}
-				}
-			} else {
-				// Tense doesn't exist in HTML data, add the entire rule-based tense
-				conjugations[tense] = ruleConjugations
-			}
-		}
+	// Get conjugations from SpanishDict
+	conjugations, err := t.getConjugationsFromSpanishDict(verb)
+	if err != nil {
+		return nil, err
 	}
 
 	// Cache the results if we got any
@@ -171,36 +149,6 @@ func isLikelySpanishVerb(word string) bool {
 	return strings.HasSuffix(word, "ar") ||
 		strings.HasSuffix(word, "er") ||
 		strings.HasSuffix(word, "ir")
-}
-
-// getVerbStem extracts the stem from a Spanish verb
-func getVerbStem(verb string) string {
-	if len(verb) < 3 {
-		return verb
-	}
-	return verb[:len(verb)-2]
-}
-
-// conjugateArVerb conjugates regular -ar verbs
-func conjugateArVerb(stem string) map[string]map[string]string {
-	return map[string]map[string]string{
-		"present": {
-			"yo":       stem + "o",
-			"tú":       stem + "as",
-			"él/ella":  stem + "a",
-			"nosotros": stem + "amos",
-			"vosotros": stem + "áis",
-			"ellos":    stem + "an",
-		},
-		"preterite": {
-			"yo":       stem + "é",
-			"tú":       stem + "aste",
-			"él/ella":  stem + "ó",
-			"nosotros": stem + "amos",
-			"vosotros": stem + "asteis",
-			"ellos":    stem + "aron",
-		},
-	}
 }
 
 // DisplayTranslation displays translation results in a formatted table
@@ -474,23 +422,17 @@ func (t *translator) cacheConjugations(verb string, conjugations map[string]map[
 	go t.saveCache()
 }
 
-// cleanConjugation removes HTML tags and entities from conjugation text
+// cleanConjugation removes HTML tags and whitespace from conjugation text
 func (t *translator) cleanConjugation(text string) string {
 	// Remove HTML tags
 	re := regexp.MustCompile(`<[^>]*>`)
 	text = re.ReplaceAllString(text, "")
-
+	
 	// Replace common HTML entities
 	text = strings.ReplaceAll(text, "&nbsp;", " ")
 	text = strings.ReplaceAll(text, "&amp;", "&")
-	text = strings.ReplaceAll(text, "&lt;", "<")
-	text = strings.ReplaceAll(text, "&gt;", ">")
-	text = strings.ReplaceAll(text, "&#8203;", "") // Zero-width space
-
-	// Trim whitespace
-	text = strings.TrimSpace(text)
-
-	return text
+	
+	return strings.TrimSpace(text)
 }
 
 // getConjugationsFromSpanishDict fetches conjugations from SpanishDict using web scraping
@@ -526,142 +468,22 @@ func (t *translator) parseSpanishDictHTML(html, verb string) (map[string]map[str
 		return nil, fmt.Errorf("failed to parse HTML: %w", err)
 	}
 
-	conjugations := make(map[string]map[string]string)
-
-	// First, try to get the first SpanishDict table which usually contains the main conjugations
+	// Get the first SpanishDict table which contains the main conjugations
 	firstSpanishDictTable := doc.Find("table.sTe03NLF").First()
 	if firstSpanishDictTable.Length() > 0 {
-		extractedConjugations := t.extractFromSpanishDictTable(firstSpanishDictTable, verb)
-		if len(extractedConjugations) > 0 {
-			conjugations = extractedConjugations
-			return conjugations, nil
-		}
+		conjugations := t.extractFromSpanishDictTable(firstSpanishDictTable, verb)
+		return conjugations, nil
 	}
 
-	// If the first table didn't work, try fallback methods
-	if len(conjugations) == 0 {
-		// Try to extract from any table with 6 rows (typical for conjugation)
-		doc.Find("table").Each(func(i int, table *goquery.Selection) {
-			rows := table.Find("tr")
-			if rows.Length() == 6 || rows.Length() == 7 { // 6 persons + optional header
-				extractedConjugations := t.extractConjugationsFromTable(table, verb)
-				if len(extractedConjugations) > 0 {
-					conjugations = extractedConjugations
-					return
-				}
-			}
-		})
-	}
-
-	return conjugations, nil
-}
-
-// extractConjugationsFromTable extracts conjugations from a goquery table selection
-func (t *translator) extractConjugationsFromTable(table *goquery.Selection, verb string) map[string]map[string]string {
-	conjugations := make(map[string]map[string]string)
-
-	// First try SpanishDict specific structure
-	if table.HasClass("sTe03NLF") {
-		return t.extractFromSpanishDictTable(table, verb)
-	}
-
-	// Fallback to generic table parsing
-	persons := []string{"yo", "tú", "él/ella", "nosotros", "vosotros", "ellos"}
-
-	rows := table.Find("tr")
-
-	// Determine if first row is header
-	headerOffset := 0
-	firstRow := rows.First()
-	if firstRow.Find("th").Length() > 0 ||
-		strings.Contains(strings.ToLower(firstRow.Text()), "presente") ||
-		strings.Contains(strings.ToLower(firstRow.Text()), "preterite") {
-		headerOffset = 1
-	}
-
-	// Extract conjugations from each row
-	rows.Each(func(rowIndex int, row *goquery.Selection) {
-		personIndex := rowIndex - headerOffset
-		if personIndex < 0 || personIndex >= len(persons) {
-			return
-		}
-
-		person := persons[personIndex]
-		cells := row.Find("td")
-
-		// Process each cell as a potential tense
-		cells.Each(func(cellIndex int, cell *goquery.Selection) {
-			conjugation := strings.TrimSpace(cell.Text())
-			conjugation = t.cleanConjugation(conjugation)
-
-			if conjugation != "" && conjugation != "-" && t.isValidConjugation(conjugation, verb) {
-				var tense string
-				switch cellIndex {
-				case 0:
-					tense = "present"
-				case 1:
-					tense = "preterite"
-				case 2:
-					tense = "imperfect"
-				case 3:
-					tense = "conditional"
-				case 4:
-					tense = "future"
-				default:
-					return // Skip extra columns
-				}
-
-				if conjugations[tense] == nil {
-					conjugations[tense] = make(map[string]string)
-				}
-				conjugations[tense][person] = conjugation
-			}
-		})
-	})
-
-	return conjugations
+	return make(map[string]map[string]string), nil
 }
 
 // extractFromSpanishDictTable extracts conjugations from SpanishDict's specific table structure
 func (t *translator) extractFromSpanishDictTable(table *goquery.Selection, verb string) map[string]map[string]string {
 	conjugations := make(map[string]map[string]string)
-
-	// Get the header row to determine tense order
-	headerRow := table.Find("tr").First()
-	tenseNames := []string{}
-
-	// Check header text for tense order
-	headerText := strings.TrimSpace(headerRow.Text())
-
-	// SpanishDict first table usually has: Present, Preterite, Imperfect, Conditional, Future
-	if strings.Contains(headerText, "PresentPreteriteImperfectConditionalFuture") {
-		tenseNames = []string{"present", "preterite", "imperfect", "conditional", "future"}
-	} else {
-		// Fallback to parsing individual headers
-		headerRow.Find("th").Each(func(i int, th *goquery.Selection) {
-			if i == 0 {
-				return // Skip first empty header
-			}
-			tenseText := strings.ToLower(strings.TrimSpace(th.Text()))
-
-			var tense string
-			switch {
-			case strings.Contains(tenseText, "present"):
-				tense = "present"
-			case strings.Contains(tenseText, "preterite"):
-				tense = "preterite"
-			case strings.Contains(tenseText, "imperfect"):
-				tense = "imperfect"
-			case strings.Contains(tenseText, "conditional"):
-				tense = "conditional"
-			case strings.Contains(tenseText, "future"):
-				tense = "future"
-			default:
-				tense = fmt.Sprintf("tense_%d", i)
-			}
-			tenseNames = append(tenseNames, tense)
-		})
-	}
+	
+	// SpanishDict tables have a predictable order: Present, Preterite, Imperfect, Conditional, Future
+	tenseNames := []string{"present", "preterite", "imperfect", "conditional", "future"}
 
 	// Process each row (skip header)
 	table.Find("tr").Each(func(rowIndex int, row *goquery.Selection) {
@@ -719,111 +541,11 @@ func (t *translator) extractFromSpanishDictTable(table *goquery.Selection, verb 
 
 // isValidConjugation checks if a string looks like a valid conjugation
 func (t *translator) isValidConjugation(text, verb string) bool {
-	if text == "" || len(text) < 2 || len(text) > 20 {
+	if text == "" || len(text) < 2 || len(text) > 15 {
 		return false
 	}
 
-	// Remove common non-conjugation patterns
-	if strings.Contains(text, "http") || strings.Contains(text, "@") || strings.Contains(text, "#") {
-		return false
-	}
-
-	// Check if it contains only letters and common Spanish characters
+	// Check if it contains only letters and Spanish characters
 	validChars := regexp.MustCompile(`^[a-záéíóúüñ]+$`)
-	if !validChars.MatchString(strings.ToLower(text)) {
-		return false
-	}
-
-	// For irregular verbs, be more lenient
-	// For regular verbs, check if it relates to the verb stem
-	stem := getVerbStem(verb)
-
-	// Allow conjugations that either contain the stem or are reasonable length
-	if strings.Contains(strings.ToLower(text), strings.ToLower(stem)) ||
-		(len(text) >= 2 && len(text) <= 10) {
-		return true
-	}
-
-	return false
-}
-
-// generateRuleBasedConjugations creates conjugations using basic grammatical rules
-func (t *translator) generateRuleBasedConjugations(verb string) map[string]map[string]string {
-	conjugations := make(map[string]map[string]string)
-
-	if !strings.HasSuffix(verb, "ar") && !strings.HasSuffix(verb, "er") && !strings.HasSuffix(verb, "ir") {
-		return conjugations // Not a verb
-	}
-
-	stem := getVerbStem(verb)
-	ending := verb[len(stem):]
-
-	// Generate present tense
-	present := make(map[string]string)
-	switch ending {
-	case "ar":
-		present["yo"] = stem + "o"
-		present["tú"] = stem + "as"
-		present["él/ella"] = stem + "a"
-		present["nosotros"] = stem + "amos"
-		present["vosotros"] = stem + "áis"
-		present["ellos"] = stem + "an"
-	case "er":
-		present["yo"] = stem + "o"
-		present["tú"] = stem + "es"
-		present["él/ella"] = stem + "e"
-		present["nosotros"] = stem + "emos"
-		present["vosotros"] = stem + "éis"
-		present["ellos"] = stem + "en"
-	case "ir":
-		present["yo"] = stem + "o"
-		present["tú"] = stem + "es"
-		present["él/ella"] = stem + "e"
-		present["nosotros"] = stem + "imos"
-		present["vosotros"] = stem + "ís"
-		present["ellos"] = stem + "en"
-	}
-	conjugations["present"] = present
-
-	// Generate preterite tense
-	preterite := make(map[string]string)
-	switch ending {
-	case "ar":
-		preterite["yo"] = stem + "é"
-		preterite["tú"] = stem + "aste"
-		preterite["él/ella"] = stem + "ó"
-		preterite["nosotros"] = stem + "amos"
-		preterite["vosotros"] = stem + "asteis"
-		preterite["ellos"] = stem + "aron"
-	case "er", "ir":
-		preterite["yo"] = stem + "í"
-		preterite["tú"] = stem + "iste"
-		preterite["él/ella"] = stem + "ió"
-		preterite["nosotros"] = stem + "imos"
-		preterite["vosotros"] = stem + "isteis"
-		preterite["ellos"] = stem + "ieron"
-	}
-	conjugations["preterite"] = preterite
-
-	// Generate future tense (same for all verbs)
-	future := make(map[string]string)
-	future["yo"] = verb + "é"
-	future["tú"] = verb + "ás"
-	future["él/ella"] = verb + "á"
-	future["nosotros"] = verb + "emos"
-	future["vosotros"] = verb + "éis"
-	future["ellos"] = verb + "án"
-	conjugations["future"] = future
-
-	// Generate conditional tense (same for all verbs)
-	conditional := make(map[string]string)
-	conditional["yo"] = verb + "ía"
-	conditional["tú"] = verb + "ías"
-	conditional["él/ella"] = verb + "ía"
-	conditional["nosotros"] = verb + "íamos"
-	conditional["vosotros"] = verb + "íais"
-	conditional["ellos"] = verb + "ían"
-	conjugations["conditional"] = conditional
-
-	return conjugations
+	return validChars.MatchString(strings.ToLower(text))
 }
